@@ -54,8 +54,10 @@ entity cic is
 		HostReset_p		:  out	std_logic;
 		SlaveReset_p	:	out	std_logic;
 		ResetA_p			:	in		std_logic;
-		ResetB_p			:	in 	std_logic
+		ResetB_p			:	in 	std_logic;
 		
+		--Test
+		PC_p				:  out 	std_logic_vector(9 downto 0)
 	);
 end entity; 
 
@@ -100,17 +102,22 @@ architecture cic_a of cic is
 	--stack 
 	type cic_stack_typ is array (0 to 3) of std_logic_vector(9 downto 0);
 	
--- exposed registers
+-- exposed registers and signals
+	signal carry_s			:  std_logic;
 	signal acc_s			:	std_logic_vector(4 downto 0);
 	signal xreg_s			:	std_logic_vector(3 downto 0);
 	signal ptr_s			:	std_logic_vector(5 downto 0);
 	signal pc_s				:	std_logic_vector(9 downto 0);
 	
 -- internal
-	signal tempReg_s		: 	std_logic_vector(3 downto 0);
+	signal temp_reg_s		: 	std_logic_vector(3 downto 0);
+	
+	signal temp_pc_s		:  std_logic_vector(9 downto 0);
 	signal stack_s			:  cic_stack_typ;
-	signal cpuState_s		: 	cpu_cycles_type;
-	signal load_pc_s		:	std_logic_vector;
+	signal cpu_state_s	: 	cpu_cycles_type;
+	signal inc_pc_s		:  std_logic;
+	signal load_pc_s		:	std_logic;
+	
 	
 begin
 
@@ -135,33 +142,54 @@ begin
 --00101111
 --01010111
 
-	cpu_state: process( Clk_p, Reset_p )
-	begin
-		if Reset_p = '0' then
-			cpuState_s <= cpuLoad;
-		elsif (rising_edge(Clk_p)) then
-			case cpuState_s is
-				when cpuLoad =>
-					cpuState_s <= cpuRead;
-				when cpuRead =>
-					cpuState_s <= cpuModify;
-				when cpuModify =>
-					cpuState_s <= cpuWrite;
-				when cpuWrite =>
-					cpuState_s <= cpuLoad;
-			end case;
-		end if;
-	end process;
+	--external signals
+	PC_p <= pc_s;
 
 	program_counter: process( Clk_p, Reset_p )
 	begin
 		if Reset_p = '0' then
 			pc_s <= ( others => '0');
+			
+		elsif ( load_pc_s = '0' ) then
+			pc_s <= temp_pc_s;
+			
 		elsif (rising_edge(Clk_p)) then
-			if cpuState_s = cpuLoad then
-				pc_s <= (others => '1');
+			
+			if inc_pc_s = '1' then
+				pc_s(5 downto 0) <= pc_s(6 downto 1);
+				if pc_s(1) = pc_s(0) then
+					pc_s(6) <= '1';
+				else
+					pc_s(6) <= '0';
+				end if;
 			end if;
+		else
+			pc_s <= pc_s;
+		end if;
 	end process;
 	
+	cpu_state: process( Clk_p, Reset_p )
+	begin
+		if Reset_p = '0' then
+			cpu_state_s <= cpuLoad;
+		elsif (rising_edge(Clk_p)) then
+			inc_pc_s <= '0';
+			case cpu_state_s is
+				--Q1
+				when cpuLoad =>
+					inc_pc_s <= '1';
+					cpu_state_s <= cpuRead;
+				--Q2
+				when cpuRead =>
+					cpu_state_s <= cpuModify;
+				--Q3
+				when cpuModify =>
+					cpu_state_s <= cpuWrite;
+				--Q4
+				when cpuWrite =>
+					cpu_state_s <= cpuLoad;
+			end case;
+		end if;
+	end process;
 
 end cic_a;
