@@ -36,6 +36,8 @@
 
 library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.STD_LOGIC_SIGNED.ALL;
+use IEEE.STD_LOGIC_ARITH.ALL;
 
 entity cic is 
 
@@ -57,6 +59,7 @@ entity cic is
 		ResetB_p			:	in 	std_logic;
 		
 		--Test
+		Accumulator_p	:  out	std_logic_vector(4 downto 0);
 		PC_p				:  out 	std_logic_vector(9 downto 0)
 	);
 end entity; 
@@ -97,26 +100,29 @@ architecture cic_a of cic is
 
 -- types
 	--FSM
-	type cpu_cycles_type IS (cpuLoad, cpuRead, cpuModify, cpuWrite);
+	type cpu_cycles_type IS (cpuLoad, cpuRead, cpuModify, cpuWrite, cpuSkip);
 	
 	--stack 
 	type cic_stack_typ is array (0 to 3) of std_logic_vector(9 downto 0);
 	
 -- exposed registers and signals
-	signal carry_s			:  std_logic;
-	signal acc_s			:	std_logic_vector(4 downto 0);
-	signal xreg_s			:	std_logic_vector(3 downto 0);
-	signal ptr_s			:	std_logic_vector(5 downto 0);
-	signal pc_s				:	std_logic_vector(9 downto 0);
+	signal carry_s				: std_logic;
+	signal acc_s				: std_logic_vector(4 downto 0);
+	signal xreg_s				: std_logic_vector(3 downto 0);
+	signal ptr_s				: std_logic_vector(5 downto 0);
+	signal pc_s					: std_logic_vector(9 downto 0);
 	
 -- internal
-	signal temp_reg_s		: 	std_logic_vector(3 downto 0);
+	signal temp_s				: std_logic_vector(4 downto 0);
+	signal current_op_s		: std_logic_vector(7 downto 0);
 	
-	signal temp_pc_s		:  std_logic_vector(9 downto 0);
-	signal stack_s			:  cic_stack_typ;
-	signal cpu_state_s	: 	cpu_cycles_type;
-	signal inc_pc_s		:  std_logic;
-	signal load_pc_s		:	std_logic;
+	signal temp_pc_s			: std_logic_vector(9 downto 0);
+	signal stack_s				: cic_stack_typ;
+	signal cpu_state_s		: cpu_cycles_type;
+	signal cpu_next_state_s	: cpu_cycles_type;
+	signal inc_pc_s			: std_logic;
+	signal load_pc_s			: std_logic;
+	signal skip_s				: std_logic;
 	
 	
 begin
@@ -144,17 +150,46 @@ begin
 
 	--external signals
 	PC_p <= pc_s;
+	Accumulator_p <= acc_s;
 
-	program_counter: process( Clk_p, Reset_p )
+	cpu_state: process( Clk_p, Reset_p )
 	begin
 		if Reset_p = '0' then
-			pc_s <= ( others => '0');
-			
-		elsif ( load_pc_s = '0' ) then
-			pc_s <= temp_pc_s;
-			
+			cpu_state_s <= cpuLoad;
+			cpu_next_state_s <= cpuRead;
 		elsif (rising_edge(Clk_p)) then
-			
+			case cpu_state_s is
+				--Q1
+				when cpuLoad =>
+					cpu_state_s <= cpuRead;
+					cpu_next_state_s <= cpuModify;
+				--Q2
+				when cpuRead =>
+					cpu_state_s <= cpuModify;
+					cpu_next_state_s <= cpuWrite;
+				--Q3
+				when cpuModify =>
+					cpu_state_s <= cpuWrite;
+					cpu_next_state_s <= cpuLoad;
+				--Q4
+				when cpuWrite =>
+					cpu_state_s <= cpuLoad;
+					cpu_next_state_s <= cpuRead;
+				--Skip states
+				when cpuSkip =>
+					cpu_state_s <= cpuLoad;
+			end case;
+		end if;
+	end process;
+	
+	program_counter: process( Clk_p, Reset_p )
+		
+	begin
+		
+		if Reset_p = '0' then
+			pc_s <= ( others => '0');
+			current_op_s <= ( others => '0');
+		elsif (rising_edge(Clk_p)) then
 			if inc_pc_s = '1' then
 				pc_s(5 downto 0) <= pc_s(6 downto 1);
 				if pc_s(1) = pc_s(0) then
@@ -162,34 +197,85 @@ begin
 				else
 					pc_s(6) <= '0';
 				end if;
+			elsif( load_pc_s = '1') then
+				pc_s <= temp_pc_s;
+			end if;
+			
+			if cpu_next_state_s = cpuLoad then
+				-- insert a NOP for skip
+				if skip_s = '1' then
+					current_op_s <= ( others => '0');
+				else
+					current_op_s <= current_op_s + X"01";
+				end if;
 			end if;
 		else
 			pc_s <= pc_s;
 		end if;
+		
 	end process;
 	
-	cpu_state: process( Clk_p, Reset_p )
+
+	opcodes: process( Clk_p, Reset_p )
+
 	begin
+	
 		if Reset_p = '0' then
-			cpu_state_s <= cpuLoad;
-		elsif (rising_edge(Clk_p)) then
+		
 			inc_pc_s <= '0';
-			case cpu_state_s is
-				--Q1
-				when cpuLoad =>
-					inc_pc_s <= '1';
-					cpu_state_s <= cpuRead;
-				--Q2
-				when cpuRead =>
-					cpu_state_s <= cpuModify;
-				--Q3
-				when cpuModify =>
-					cpu_state_s <= cpuWrite;
-				--Q4
-				when cpuWrite =>
-					cpu_state_s <= cpuLoad;
+			load_pc_s <= '0';
+			acc_s <= ( others => '0');
+			temp_s <= ( others => '0');
+			
+		elsif ( rising_edge(Clk_p)) then
+		
+			inc_pc_s <= '0';
+			skip_s <= '0';
+			
+			-- decode operations
+			case current_op_s(7 downto 4) is
+			
+				-- adi N "add immediate", acc = acc +N, skip if overflow
+				-- 00 is NOP
+				when x"0" =>
+					case cpu_next_state_s is
+						when cpuRead =>
+							temp_s <= ('0' & acc_s(3 downto 0));
+						when cpuModify =>
+							temp_s <= temp_s + ('0' & current_op_s(3 downto 0));
+						when cpuWrite =>
+							acc_s <= temp_s;
+							inc_pc_s <= '1';
+							if( temp_s(4) = '1' ) then
+								skip_s <= '1';
+							end if;
+						when others =>
+							null;
+					end case;
+					
+				-- skai "skip accumulator immediate"
+				when x"1" =>
+					case cpu_next_state_s is
+						when cpuRead =>
+							temp_s <= acc_s;
+						when cpuModify =>
+							null;
+						when cpuWrite =>
+							if( temp_s = current_op_s(3 downto 0) ) then
+								skip_s <= '1';
+							end if;
+						when others =>
+							null;
+					end case;
+					
+				-- lbli " 
+				
+				when others =>
+					null;
+				
 			end case;
 		end if;
+		
 	end process;
-
+	
 end cic_a;

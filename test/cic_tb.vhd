@@ -25,6 +25,7 @@ architecture rtl of cic_tb is
 		
 		--Test
 	signal	PC					: std_logic_vector(9 downto 0);
+	signal 	Accumulator		: std_logic_vector(4 downto 0);
 	
 	-- constants
 	constant CLK_PERIOD : time := 250 ns;-- 4MHz
@@ -43,7 +44,8 @@ begin
 			SlaveReset_p => SlaveReset,
 			ResetA_p => ResetA,
 			ResetB_p => ResetB,
-			PC_p => PC
+			PC_p => PC,
+			Accumulator_p => Accumulator
 		);
 	
 	--clock generation
